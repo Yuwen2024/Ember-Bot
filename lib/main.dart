@@ -5,33 +5,28 @@ import 'package:provider/provider.dart';
 import 'package:http/http.dart' as http;
 import 'package:video_player/video_player.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:uuid/uuid.dart';
+final _uuid = Uuid();
 
-Future<ServerResponse> createRequest(double left, double midX, double midY, double right, String ip, bool led, bool nozzle) async {
-  final response = await http.post(
+void createRequest(int requestNumber, double left, double midX, double midY, double right, String ip, bool led, bool nozzle) {
+  http.post(
     Uri.parse(ip),
     headers: <String, String>{
       'Content-Type': 'application/json; charset=UTF-8',
     },
-    body: jsonEncode(<String, double>{
+    body: jsonEncode(<String, dynamic>{
+      // 'request_uuid': uuid,
+      'request_number': requestNumber,
       'LED_Control': (led?1.0:0.0),
       'left_position': left,
       'mid_x': midX,
       'mid_y': midY,
       'right_position': right,
       'pump': (nozzle?1.0:0.0)}),
-  );
-
-  if (response.statusCode == 200) {
-    // If the server did return a 201 CREATED response,
-    // then parse the JSON.
-    return ServerResponse.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
-  } else {
-    // If the server did not return a 201 CREATED response,
-    // then throw an exception.
-    print("Connection failed with IP $ip");
-    return ServerResponse.fromJson({'null': null});
-    // throw Exception('Failed to create request.');
-  }
+  ).timeout(const Duration(milliseconds: 800)).catchError((error) {
+    // Prevent errors from piling up.
+    print('Request error: $error');
+  });
 }
 
 class ServerResponse {
@@ -52,14 +47,9 @@ void main() {
   runApp(const EmberBotApp());
 }
 
-class EmberBotApp extends StatefulWidget {
-  const EmberBotApp({super.key});
-
-  @override
-  State<EmberBotApp> createState() => EmberBotAppState();
-}
-
-class EmberBotAppState extends State<EmberBotApp> with ChangeNotifier {
+class EmberBotAppState extends ChangeNotifier {
+  String requestUUID = '';
+  int requestNumber = 0;
   var lastLeftPadel = 0.0;
   var leftPadel = 0.0;
   var lastRightPadel = 0.0;
@@ -73,10 +63,54 @@ class EmberBotAppState extends State<EmberBotApp> with ChangeNotifier {
   bool LEDOn = false;
   bool pump = false;
 
-  @override
-  void initState() {
-    super.initState();
+  void updateLED(){
+    createRequest(requestNumber++, leftPadel, nozzleHorizontal, nozzleVertical, rightPadel, serverIP, LEDOn, pump);
+    notifyListeners();
   }
+
+  void updateLeftTrack(var val) {
+    leftPadel = 215.0 - val;
+
+    if ((lastLeftPadel - leftPadel).abs() >= 5.0) {
+      lastLeftPadel = leftPadel - (leftPadel % 5);
+      createRequest(requestNumber++, leftPadel, nozzleHorizontal, nozzleVertical, rightPadel, serverIP, LEDOn, pump);
+      notifyListeners();
+    }
+  }
+
+  void updateRightTrack(var val) {
+    rightPadel = 215.0 - val;
+
+    if ((lastRightPadel - rightPadel).abs() >= 5.0) {
+      lastRightPadel = rightPadel - (rightPadel % 5);
+      createRequest(requestNumber++, leftPadel, nozzleHorizontal, nozzleVertical, rightPadel, serverIP, LEDOn, pump);
+      notifyListeners();
+    }
+  }
+
+  void updateNozzleAim(var x, var y) {
+    nozzleHorizontal = x - 224.0;
+    nozzleVertical = 135.0 - y;
+    createRequest(requestNumber++, leftPadel, nozzleHorizontal, nozzleVertical, rightPadel, serverIP, LEDOn, pump);
+    notifyListeners();
+  }
+
+  void updatePump() {
+    createRequest(requestNumber++, leftPadel, nozzleHorizontal, nozzleVertical, rightPadel, serverIP, LEDOn, pump);
+    notifyListeners();
+  }
+
+  void updateServerIP(List<String> ip) {
+    serverIP = ip[0];
+    print("Server IP updated to $serverIP");
+    streamUrl = ip[1];
+    print("Video IP updated to $streamUrl");
+    notifyListeners();
+  }
+}
+
+class EmberBotApp extends StatelessWidget {
+  const EmberBotApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -90,51 +124,6 @@ class EmberBotAppState extends State<EmberBotApp> with ChangeNotifier {
       home: MyHomePage(title: 'Ember Bot Controller'),
       )
     );
-  }
-
-  void updateLED(){
-    createRequest(leftPadel, nozzleHorizontal, nozzleVertical, rightPadel, serverIP, LEDOn, pump);
-    notifyListeners();
-  }
-
-  void updateLeftTrack(var val) {
-    leftPadel = 215.0 - val;
-
-    if ((lastLeftPadel - leftPadel).abs() >= 5.0) {
-      lastLeftPadel = leftPadel - (leftPadel % 5);
-      createRequest(leftPadel, nozzleHorizontal, nozzleVertical, rightPadel, serverIP, LEDOn, pump);
-      notifyListeners();
-    }
-  }
-
-  void updateRightTrack(var val) {
-    rightPadel = 215.0 - val;
-
-    if ((lastRightPadel - rightPadel).abs() >= 5.0) {
-      lastRightPadel = rightPadel - (rightPadel % 5);
-      createRequest(leftPadel, nozzleHorizontal, nozzleVertical, rightPadel, serverIP, LEDOn, pump);
-      notifyListeners();
-    }
-  }
-
-  void updateNozzleAim(var x, var y) {
-    nozzleHorizontal = x - 224.0;
-    nozzleVertical = 135.0 - y;
-    createRequest(leftPadel, nozzleHorizontal, nozzleVertical, rightPadel, serverIP, LEDOn, pump);
-    notifyListeners();
-  }
-
-  void updatePump() {
-    createRequest(leftPadel, nozzleHorizontal, nozzleVertical, rightPadel, serverIP, LEDOn, pump);
-    notifyListeners();
-  }
-
-  void updateServerIP(List<String> ip) {
-    serverIP = ip[0];
-    print("Server IP updated to $serverIP");
-    streamUrl = ip[1];
-    print("Video IP updated to $streamUrl");
-    notifyListeners();
   }
 }
 
