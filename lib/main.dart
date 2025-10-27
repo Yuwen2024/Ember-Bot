@@ -1,22 +1,24 @@
 import 'dart:convert';
-
+import 'package:pointer_interceptor/pointer_interceptor.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:http/http.dart' as http;
 import 'package:video_player/video_player.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-Future<ServerResponse> createRequest(double left, double midX, double midY, double right, String ip) async {
+Future<ServerResponse> createRequest(double left, double midX, double midY, double right, String ip, bool led, bool nozzle) async {
   final response = await http.post(
     Uri.parse(ip),
     headers: <String, String>{
       'Content-Type': 'application/json; charset=UTF-8',
     },
     body: jsonEncode(<String, double>{
+      'LED_Control': (led?1.0:0.0),
       'left_position': left,
       'mid_x': midX,
       'mid_y': midY,
-      'right_position': right}),
+      'right_position': right,
+      'pump': (nozzle?1.0:0.0)}),
   );
 
   if (response.statusCode == 200) {
@@ -58,7 +60,9 @@ class EmberBotApp extends StatefulWidget {
 }
 
 class EmberBotAppState extends State<EmberBotApp> with ChangeNotifier {
+  var lastLeftPadel = 0.0;
   var leftPadel = 0.0;
+  var lastRightPadel = 0.0;
   var rightPadel = 0.0;
   var nozzleVertical = 0.0;
   var nozzleHorizontal = 0.0;
@@ -67,6 +71,7 @@ class EmberBotAppState extends State<EmberBotApp> with ChangeNotifier {
   String serverIP = 'http://127.0.0.1:8080';
   String streamUrl = "http://192.168.0.0.1";
   bool LEDOn = false;
+  bool pump = false;
 
   @override
   void initState() {
@@ -87,22 +92,40 @@ class EmberBotAppState extends State<EmberBotApp> with ChangeNotifier {
     );
   }
 
+  void updateLED(){
+    createRequest(leftPadel, nozzleHorizontal, nozzleVertical, rightPadel, serverIP, LEDOn, pump);
+    notifyListeners();
+  }
+
   void updateLeftTrack(var val) {
     leftPadel = 215.0 - val;
-    createRequest(leftPadel, nozzleHorizontal, nozzleVertical, rightPadel, serverIP);
-    notifyListeners();
+
+    if ((lastLeftPadel - leftPadel).abs() >= 5.0) {
+      lastLeftPadel = leftPadel - (leftPadel % 5);
+      createRequest(leftPadel, nozzleHorizontal, nozzleVertical, rightPadel, serverIP, LEDOn, pump);
+      notifyListeners();
+    }
   }
 
   void updateRightTrack(var val) {
     rightPadel = 215.0 - val;
-    createRequest(leftPadel, nozzleHorizontal, nozzleVertical, rightPadel, serverIP);
-    notifyListeners();
+
+    if ((lastRightPadel - rightPadel).abs() >= 5.0) {
+      lastRightPadel = rightPadel - (rightPadel % 5);
+      createRequest(leftPadel, nozzleHorizontal, nozzleVertical, rightPadel, serverIP, LEDOn, pump);
+      notifyListeners();
+    }
   }
 
   void updateNozzleAim(var x, var y) {
-    nozzleHorizontal = x - 466.0;
-    nozzleVertical = y - 215.0;
-    createRequest(leftPadel, nozzleHorizontal, nozzleVertical, rightPadel, serverIP);
+    nozzleHorizontal = x - 224.0;
+    nozzleVertical = 135.0 - y;
+    createRequest(leftPadel, nozzleHorizontal, nozzleVertical, rightPadel, serverIP, LEDOn, pump);
+    notifyListeners();
+  }
+
+  void updatePump() {
+    createRequest(leftPadel, nozzleHorizontal, nozzleVertical, rightPadel, serverIP, LEDOn, pump);
     notifyListeners();
   }
 
@@ -117,7 +140,6 @@ class EmberBotAppState extends State<EmberBotApp> with ChangeNotifier {
 
 class LeftMovementControlButton extends StatefulWidget {
   const LeftMovementControlButton({super.key});
-
 
   @override
   State<StatefulWidget> createState() => _LeftMovementControlButton();
@@ -226,57 +248,210 @@ class _RightMovementControlButton extends State<RightMovementControlButton> {
 }
 
 class NozzleMovementControlButton extends StatefulWidget {
-  const NozzleMovementControlButton({super.key});
+  const NozzleMovementControlButton({
+    super.key,
+    required this.stackKey, // MUST be the key of the Stack where this is Positioned
+  });
+
+  final GlobalKey stackKey;
 
   @override
-  State<StatefulWidget> createState() => _NozzleMovementControlButton();
+  State<NozzleMovementControlButton> createState() => _NozzleMovementControlButtonState();
 }
 
-class _NozzleMovementControlButton extends State<NozzleMovementControlButton> {
-  
+class _NozzleMovementControlButtonState extends State<NozzleMovementControlButton> {
+  static const double _fabSize = 56.0;
+
+  // Starting position inside the SAME Stack that owns widget.stackKey
+  Offset _pos = const Offset(224, 135);
+
+  RenderBox get _stackBox =>
+      widget.stackKey.currentContext!.findRenderObject() as RenderBox;
+
   @override
   Widget build(BuildContext context) {
-    var appState = context.watch<EmberBotAppState>();
+    final appState = context.read<EmberBotAppState>(); // use read to avoid rebuilds while dragging
 
-    return Draggable(
-      feedback: SizedBox(
-        height: 50.0,
-        width: 50.0,
-        child: FittedBox(
+    return Positioned(
+      left: _pos.dx,
+      top: _pos.dy,
+      child: PointerInterceptor(
+        child: Draggable(
+        feedback: Material(
+          type: MaterialType.transparency,
+          child: SizedBox(
+            width: _fabSize,
+            height: _fabSize,
+            child: FloatingActionButton(
+              onPressed: null,
+              heroTag: 'nozzle-feedback', // stable, different from child below
+              child: const Icon(Icons.local_drink),
+            ),
+          ),
+        ),
+        childWhenDragging: const SizedBox(width: _fabSize, height: _fabSize),
+
+        // Stream positions while dragging — in the Stack's LOCAL coordinates
+        onDragUpdate: (details) {
+          final local = _stackBox.globalToLocal(details.globalPosition);
+          // appState.updateNozzleAim(local.dx, local.dy);
+        },
+
+        // On release, place the button where it was dropped (no snap-back)
+        onDragEnd: (details) {
+          final localTopLeft = _stackBox.globalToLocal(details.offset);
+          final size = _stackBox.size;
+
+          final dx = (localTopLeft.dx);
+          final dy = (localTopLeft.dy);
+
+          setState(() => _pos = Offset(dx, dy));
+          appState.updateNozzleAim(dx, dy);
+        },
+
+        child: SizedBox(
+          width: _fabSize,
+          height: _fabSize,
           child: FloatingActionButton(
-            onPressed: () {
-              print("Drag button pressed");
-            },
-            heroTag: UniqueKey(),
+            onPressed: () => debugPrint('Nozzle pressed'),
+            heroTag: 'nozzle', // stable
             child: const Icon(Icons.local_drink),
           ),
         ),
       ),
-      childWhenDragging: Container(),
-      onDragUpdate: (details) {
-        print("Nozzle moving: ${details.globalPosition.dx.toStringAsFixed(2)} ${details.globalPosition.dy.toStringAsFixed(2)}");
-        appState.updateNozzleAim(details.globalPosition.dx, details.globalPosition.dy);
-      },
-      onDraggableCanceled: (velocity, offset) {
-        print("Nozzle cancelled: 466.0, 215.0");
-        appState.updateNozzleAim(466.0, 215.0);
-      },
-      child: SizedBox(
-        height: 50.0,
-        width: 50.0,
-        child: FittedBox(
-          child: FloatingActionButton(
-            onPressed: () {
-              print("Nozzle button pressed");
-            },
-            heroTag: UniqueKey(),
-            child: const Icon(Icons.local_drink),
-          ),
-        ),
-      ),
+      )
     );
   }
 }
+
+// class NozzleMovementControlButton extends StatefulWidget {
+//   const NozzleMovementControlButton({
+//     super.key,
+//     required this.stackKey,
+//     });
+
+//   final GlobalKey stackKey;
+  
+//   @override
+//   State<StatefulWidget> createState() => _NozzleMovementControlButton();
+// }
+
+// class _NozzleMovementControlButton extends State<NozzleMovementControlButton> {
+//   static const double _fabSize = 56.0;
+//   Offset _pos = const Offset(120, 120); // starting local position inside the Stack
+//   RenderBox get _stackBox =>
+//       widget.stackKey.currentContext!.findRenderObject() as RenderBox;
+
+//   @override
+//   Widget build(BuildContext context) {
+//     final appState = context.watch<EmberBotAppState>();
+
+//     // We'll render as a Positioned inside the SAME Stack that owns widget.stackKey.
+//     return Positioned(
+//       left: _pos.dx,
+//       top: _pos.dy,
+//       child: LongPressDraggable(
+//         feedback: Material(
+//           type: MaterialType.transparency,
+//           child: SizedBox(
+//             width: _fabSize,
+//             height: _fabSize,
+//             child: FloatingActionButton(
+//               onPressed: null,
+//               heroTag: 'nozzle-feedback',
+//               child: const Icon(Icons.local_drink),
+//             ),
+//           ),
+//         ),
+//         childWhenDragging: const SizedBox(width: _fabSize, height: _fabSize),
+//         onDragUpdate: (details) {
+//           // live updates to your server/model (use global -> local if you prefer)
+//           appState.updateNozzleAim(details.globalPosition.dx, details.globalPosition.dy);
+//         },
+//         onDraggableCanceled: (velocity, offset) {
+//           // Optional fallback
+//         },
+//         onDragEnd: (details) {
+//           final box = widget.stackKey.currentContext!.findRenderObject() as RenderBox;
+//           final local = box.globalToLocal(details.offset);
+//           final size = box.size;
+
+//           final dx = (local.dx - _fabSize / 2).clamp(0.0, size.width  - _fabSize);
+//           final dy = (local.dy - _fabSize / 2).clamp(0.0, size.height - _fabSize);
+
+//           setState(() => _pos = Offset(dx, dy));
+//           appState.updateNozzleAim(dx, dy); // or convert to your logical coords
+//         },
+//         child: SizedBox(
+//           width: _fabSize,
+//           height: _fabSize,
+//           child: FloatingActionButton(
+//             onPressed: () => debugPrint('Nozzle pressed'),
+//             heroTag: 'nozzle',
+//             child: const Icon(Icons.local_drink),
+//           ),
+//         ),
+//       ),
+//     );
+//   }
+// }
+// class _NozzleMovementControlButton extends State<NozzleMovementControlButton> {
+//   static const double _fabSize = 56.0;
+//   Offset _pos = const Offset(120, 120);
+
+//   @override
+//   Widget build(BuildContext context) {
+//     var appState = context.watch<EmberBotAppState>();
+
+//     return LongPressDraggable(
+//       feedback: SizedBox(
+//         height: 50.0,
+//         width: 50.0,
+//         child: FittedBox(
+//           child: FloatingActionButton(
+//             onPressed: () {
+//               print("Drag button pressed");
+//             },
+//             heroTag: UniqueKey(),
+//             child: const Icon(Icons.local_drink),
+//           ),
+//         ),
+//       ),
+//       childWhenDragging: Container(),
+//       onDragUpdate: (details) {
+//         print("Nozzle moving: ${details.globalPosition.dx.toStringAsFixed(2)} ${details.globalPosition.dy.toStringAsFixed(2)}");
+//         appState.updateNozzleAim(details.globalPosition.dx, details.globalPosition.dy);
+//       },
+//       onDraggableCanceled: (velocity, offset) {
+//         print("Nozzle cancelled: 466.0, 215.0");
+//         appState.updateNozzleAim(466.0, 215.0);
+//       },
+//       onDragEnd: (details) {
+//         final stackBox = widget.stackKey.currentContext!.findRenderObject() as RenderBox;
+//         final local = stackBox.globalToLocal(details.offset);
+
+//         // Center the FAB at the finger, and clamp inside bounds
+//         final dx = (local.dx - _fabSize / 2).clamp(0.0, usableW - _fabSize);
+//         final dy = (local.dy - _fabSize / 2).clamp(0.0, usableH - _fabSize);
+
+//         setState(() => _pos = Offset(dx, dy));
+//       },
+//       child: SizedBox(
+//         height: 50.0,
+//         width: 50.0,
+//         child: FittedBox(
+//           child: FloatingActionButton(
+//             onPressed: () {
+//               print("Nozzle button pressed");
+//             },
+//             heroTag: UniqueKey(),
+//             child: const Icon(Icons.local_drink),
+//           ),
+//         ),
+//       ),
+//     );
+//   }
+// }
 
 class WaterButton extends StatefulWidget {
   const WaterButton({super.key});
@@ -295,10 +470,12 @@ class _WaterButton extends State<WaterButton> {
     return FloatingActionButton(onPressed: () {
       setState(() {
         print("Water control button pressed");
-        pressed = !pressed;
+        appState.pump = !appState.pump;
+        appState.updatePump();
       });
     }, 
-    child: Icon(Icons.shower));
+    child: Icon(appState.pump ? Icons.shower : Icons.sunny));
+    
 
     // return Draggable(
     //   axis: Axis.vertical,
@@ -348,6 +525,7 @@ class _MyHomePageState extends State<MyHomePage> {
   late VideoPlayerController _controller;
   late Future<void> _initializeVideoPlayerFuture;
   late final WebViewController _webview_controller;
+  final GlobalKey _stackKey = GlobalKey();
   
   String ip = "127.0.0.1";
   String streamUrl = "http://10.0.40.140:5001";
@@ -403,6 +581,7 @@ class _MyHomePageState extends State<MyHomePage> {
             setState(() {
               appState.LEDOn = !appState.LEDOn;
               print("LED button pressed $appState.LEDOn");
+              appState.updateLED();
             });
             //_navigateAndDisplaySettings(appState, context);
             // Navigator.push(
@@ -450,8 +629,14 @@ class _MyHomePageState extends State<MyHomePage> {
             Expanded(
               flex: 3,
               child: Stack(
+                key: _stackKey,
                 children: [
                   WebViewWidget(controller: _webview_controller),
+                  Center(child: Column(
+                    children: [Text("x = ${appState.nozzleHorizontal.toStringAsFixed(2)}, y = ${appState.nozzleVertical.toStringAsFixed(2)}"),],
+                  ),
+                  ),
+                  NozzleMovementControlButton(stackKey: _stackKey,),
                   // FutureBuilder(
                   //   future: _initializeVideoPlayerFuture, 
                   //   builder: (context, snapshot) {
@@ -470,15 +655,15 @@ class _MyHomePageState extends State<MyHomePage> {
                   //     }
                   //   },
                   // ),
-                  Center(
-                    child: Column(
-                      children: [
-                      Text("x = ${appState.nozzleHorizontal.toStringAsFixed(2)}, y = ${appState.nozzleVertical.toStringAsFixed(2)}"),
-                      SizedBox(height: 114,),
-                      NozzleMovementControlButton(),
-                      ],
-                    ),
-                  )
+                  // Center(
+                  //   child: Column(
+                  //     children: [
+                  //     Text("x = ${appState.nozzleHorizontal.toStringAsFixed(2)}, y = ${appState.nozzleVertical.toStringAsFixed(2)}"),
+                  //     SizedBox(height: 114,),
+                  //     // NozzleMovementControlButton(stackKey: _stackKey,),
+                  //     ],
+                  //   ),
+                  // )
                 ],
               ),
             ),
@@ -489,7 +674,7 @@ class _MyHomePageState extends State<MyHomePage> {
                 children: [
                   Text(appState.rightPadel.toStringAsFixed(2)),
                   SizedBox(height: 114),
-                  RightMovementControlButton(),
+                  Container(child: RightMovementControlButton()),
                   SizedBox(height: 54,),
                   WaterButton(),
                 ],
