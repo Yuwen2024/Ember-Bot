@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -89,8 +90,8 @@ class EmberBotAppState extends ChangeNotifier {
   }
 
   void updateNozzleAim(var x, var y) {
-    nozzleHorizontal = x - 224.0;
-    nozzleVertical = 135.0 - y;
+    nozzleHorizontal = (x - 250.0) / 17; //250.0;
+    nozzleVertical = (160.0 - y) / 26; //160
     createRequest(requestNumber++, leftPadel, nozzleHorizontal, nozzleVertical, rightPadel, serverIP, LEDOn, pump);
     notifyListeners();
   }
@@ -252,7 +253,7 @@ class _NozzleMovementControlButtonState extends State<NozzleMovementControlButto
   static const double _fabSize = 56.0;
 
   // Starting position inside the SAME Stack that owns widget.stackKey
-  Offset _pos = const Offset(224, 135);
+  Offset _pos = const Offset(250, 160);
 
   RenderBox get _stackBox =>
       widget.stackKey.currentContext!.findRenderObject() as RenderBox;
@@ -265,6 +266,7 @@ class _NozzleMovementControlButtonState extends State<NozzleMovementControlButto
       left: _pos.dx,
       top: _pos.dy,
       child: PointerInterceptor(
+        
         child: Draggable(
         feedback: Material(
           type: MaterialType.transparency,
@@ -289,10 +291,10 @@ class _NozzleMovementControlButtonState extends State<NozzleMovementControlButto
         // On release, place the button where it was dropped (no snap-back)
         onDragEnd: (details) {
           final localTopLeft = _stackBox.globalToLocal(details.offset);
-          final size = _stackBox.size;
+          // final size = _stackBox.size;
 
-          final dx = (localTopLeft.dx);
-          final dy = (localTopLeft.dy);
+          final dx = min(max((localTopLeft.dx), 0.0), 500.0);
+          final dy = min(max((localTopLeft.dy), 0.0), 320.0);
 
           setState(() => _pos = Offset(dx, dy));
           appState.updateNozzleAim(dx, dy);
