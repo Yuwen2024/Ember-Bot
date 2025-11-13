@@ -59,8 +59,8 @@ class EmberBotAppState extends ChangeNotifier {
   var nozzleHorizontal = 0.0;
   String responseText = 'Initial reading';
   String videoIP = '192.168.0.1';
-  String serverIP = 'http://127.0.0.1:8080';
-  String streamUrl = "http://192.168.0.0.1";
+  String serverIP = 'http://192.168.4.1/coords';
+  String streamUrl = "http://192.168.4.50";
   bool LEDOn = false;
   bool pump = false;
 
@@ -519,7 +519,7 @@ class _MyHomePageState extends State<MyHomePage> {
   final GlobalKey _stackKey = GlobalKey();
   
   String ip = "127.0.0.1";
-  String streamUrl = "http://10.0.40.140:5001";
+  String streamUrl = "http://192.168.4.50";
 
   @override
   void initState() {
@@ -541,6 +541,8 @@ class _MyHomePageState extends State<MyHomePage> {
       ..setOverScrollMode(WebViewOverScrollMode.never)
       ..setVerticalScrollBarEnabled(false)
       ..setHorizontalScrollBarEnabled(false);
+
+    _webview_controller.loadRequest(Uri.parse(streamUrl));
   }
 
   @override
@@ -568,6 +570,22 @@ class _MyHomePageState extends State<MyHomePage> {
             }, icon: Icon(Icons.menu)
           ),
         actions: [
+          IconButton(onPressed: () {
+            print("Refresh button pressed");
+            _webview_controller.loadRequest(Uri.parse(streamUrl));
+            // setState(() {
+            //   appState.LEDOn = !appState.LEDOn;
+            //   print("Refresh button pressed $appState.LEDOn");
+            //   appState.updateLED();
+            // });
+            //_navigateAndDisplaySettings(appState, context);
+            // Navigator.push(
+            //   context,
+            //   MaterialPageRoute(builder: (context) => const UserSettingPage()),
+            // );
+          },
+          icon: Icon(Icons.refresh)),
+
           IconButton(onPressed: () {
             setState(() {
               appState.LEDOn = !appState.LEDOn;
@@ -622,10 +640,10 @@ class _MyHomePageState extends State<MyHomePage> {
               child: Stack(
                 key: _stackKey,
                 children: [
-                  WebViewWidget(controller: _webview_controller),
-                  Center(child: Column(
-                    children: [Text("x = ${appState.nozzleHorizontal.toStringAsFixed(2)}, y = ${appState.nozzleVertical.toStringAsFixed(2)}"),],
-                  ),
+                  Positioned.fill(child: WebViewWidget(controller: _webview_controller)),
+                    Center(child: Column(
+                      children: [Text("x = ${appState.nozzleHorizontal.toStringAsFixed(2)}, y = ${appState.nozzleVertical.toStringAsFixed(2)}"),],
+                    ),
                   ),
                   NozzleMovementControlButton(stackKey: _stackKey,),
                   // FutureBuilder(
